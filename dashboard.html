@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CivicPulse — Citizen Terminal</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: bold;
+            display: inline-block;
+        }
+        .status-Pending { background: #eab308; color: #000; }
+        .status-Resolved { background: #22c55e; color: #fff; }
+        .status-Not-Important { background: #6b7280; color: #fff; }
+        .status-Rejected { background: #ef4444; color: #fff; }
+        #osm-map { height: 260px; width: 100%; border-radius: 8px; margin-top: 8px; border: 1px solid var(--border-color); }
+    </style>
+</head>
+<body>
+    <header class="pulse-nav">
+        <div class="brand-title">⚡ CivicPulse Terminal</div>
+        <div>
+            <span style="margin-right: 15px; color: var(--text-muted);">User: <strong style="color: var(--text-main);">{{ user.name }}</strong></span>
+            <button onclick="logout()" class="btn-secondary">Logout</button>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="tabs">
+            <button class="tab-btn active" id="btn-tab-new" onclick="switchView('new')">File New Grievance</button>
+            <button class="tab-btn" id="btn-tab-history" onclick="switchView('history')">Submission History</button>
+        </div>
+
+        <div id="view-new" class="card">
+            <h2>📢 File Anonymous Civic Complaint</h2>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem; font-size: 0.9rem;">
+                Requirement: 100 to 20,000 words. Attachments up to 500 MB supported.
+            </p>
+
+            <form id="complaint-form" onsubmit="submitReport(event)">
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;">
+                    <div class="form-group">
+                        <label>Country</label>
+                        <select id="country" onchange="fetchStates()" required>
+                            <option value="">Select Country</option>
+                            <option value="United States">United States</option>
+                            <option value="India">India</option>
+                            <option value="United Kingdom">United Kingdom</option>
+                            <option value="Canada">Canada</option>
+                            <option value="Australia">Australia</option>
+                            <option value="Germany">Germany</option>
+                            <option value="France">France</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>State / Province</label>
+                        <select id="state" onchange="fetchCities()" required disabled>
+                            <option value="">Select State</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>City / District</label>
+                        <select id="city" required disabled>
+                            <option value="">Select City</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- OpenStreetMap Coordinate Pinning -->
+                <div class="form-group">
+                    <label>Exact Location (Pin on OpenStreetMap)</label>
+                    <p style="font-size: 0.8rem; color: var(--text-muted); margin: 2px 0;">Click on the map to set location pin or enter coordinates directly below.</p>
+                    <div id="osm-map"></div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 8px;">
+                        <input type="number" step="any" id="latitude" placeholder="Latitude (e.g., 9.9312)" style="font-size: 0.85rem;">
+                        <input type="number" step="any" id="longitude" placeholder="Longitude (e.g., 76.2673)" style="font-size: 0.85rem;">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Infrastructure Category</label>
+                    <select id="category" required>
+                        <option value="Public Sanitation">Public Sanitation</option>
+                        <option value="Water Infrastructure">Water Infrastructure</option>
+                        <option value="Electrical Power Grid">Electrical Power Grid</option>
+                        <option value="Roads & Highways">Roads & Highways</option>
+                        <option value="Public Health Danger">Public Health Danger</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Grievance Narrative (100 - 20,000 Words)</label>
+                    <textarea id="complaint_text" rows="8" required oninput="updateWordCount()"></textarea>
+                    <div style="display: flex; justify-content: space-between; margin-top: 5px; font-size: 0.85rem;">
+                        <span style="color: var(--text-muted);">Words: <strong id="word-count" style="color: var(--primary);">0</strong> / 20,000</span>
+                        <span id="len-warning" style="color: var(--danger);"></span>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label>Evidence Attachment (Max 500 MB)</label>
+                    <input type="file" id="attachment" style="padding: 5px;">
+                </div>
+
+                <button type="submit" id="submit-btn" class="btn-primary">Dispatch Grievance</button>
+            </form>
+
+            <div id="receipt-box" class="hidden" style="margin-top: 1.5rem; padding: 1rem; background: var(--bg-main); border: 1px solid var(--primary); border-radius: 8px;">
+                <h4 style="color: var(--primary);">✅ Complaint Registered</h4>
+                <p>Tracking ID: <strong id="receipt-id" style="color: var(--primary); font-family: monospace;"></strong></p>
+                <p>Severity Rating: <span id="receipt-score"></span></p>
+            </div>
+        </div>
+
+        <div id="view-history" class="card hidden">
+            <h2>📜 Your Submission History</h2>
+            <div id="history-list" style="margin-top: 1rem;"></div>
+        </div>
+    </div>
+
+    <script>
+        const LOCATION_DATA = {
+            "United States": { "California": ["Los Angeles", "San Francisco"], "New York": ["New York City", "Buffalo"], "Texas": ["Houston", "Austin"] },
+            "India": { "Kerala": ["Kochi", "Thiruvananthapuram", "Kozhikode"], "Maharashtra": ["Mumbai", "Pune"], "Karnataka": ["Bengaluru", "Mysuru"] },
+            "United Kingdom": { "England": ["London", "Manchester"], "Scotland": ["Edinburgh", "Glasgow"] },
+            "Canada": { "Ontario": ["Toronto", "Ottawa"], "Quebec": ["Montreal"] },
+            "Australia": { "New South Wales": ["Sydney"], "Victoria": ["Melbourne"] },
+            "Germany": { "Bavaria": ["Munich"], "Berlin": ["Berlin"] },
+            "France": { "Île-de-France": ["Paris"], "Provence-Alpes-Côte d'Azur": ["Marseille"] }
+        };
+
+        let map, marker;
+        document.addEventListener("DOMContentLoaded", () => {
+            map = L.map('osm-map').setView([9.9312, 76.2673], 10);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+
+            map.on('click', (e) => {
+                const { lat, lng } = e.latlng;
+                document.getElementById('latitude').value = lat.toFixed(6);
+                document.getElementById('longitude').value = lng.toFixed(6);
+                
+                if (marker) map.removeLayer(marker);
+                marker = L.marker([lat, lng]).addTo(map);
+            });
+        });
+
+        function fetchStates() {
+            const country = document.getElementById('country').value;
+            const stateSelect = document.getElementById('state');
+            const citySelect = document.getElementById('city');
+
+            stateSelect.innerHTML = '<option value="">Select State</option>';
+            citySelect.innerHTML = '<option value="">Select City</option>';
+            citySelect.disabled = true;
+
+            if (country && LOCATION_DATA[country]) {
+                Object.keys(LOCATION_DATA[country]).forEach(state => {
+                    const opt = document.createElement('option');
+                    opt.value = state;
+                    opt.innerText = state;
+                    stateSelect.appendChild(opt);
+                });
+                stateSelect.disabled = false;
+            } else {
+                stateSelect.disabled = true;
+            }
+        }
+
+        function fetchCities() {
+            const country = document.getElementById('country').value;
+            const state = document.getElementById('state').value;
+            const citySelect = document.getElementById('city');
+
+            citySelect.innerHTML = '<option value="">Select City</option>';
+
+            if (country && state && LOCATION_DATA[country] && LOCATION_DATA[country][state]) {
+                LOCATION_DATA[country][state].forEach(city => {
+                    const opt = document.createElement('option');
+                    opt.value = city;
+                    opt.innerText = city;
+                    citySelect.appendChild(opt);
+                });
+                citySelect.disabled = false;
+            } else {
+                citySelect.disabled = true;
+            }
+        }
+
+        function updateWordCount() {
+            const text = document.getElementById('complaint_text').value.trim();
+            const count = text ? text.split(/\s+/).length : 0;
+            document.getElementById('word-count').innerText = count;
+            const warning = document.getElementById('len-warning');
+            if (count < 100) warning.innerText = `Need ${100 - count} more words.`;
+            else if (count > 20000) warning.innerText = `Exceeds 20,000 word limit!`;
+            else warning.innerText = '';
+        }
+
+        async function submitReport(e) {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append('country', document.getElementById('country').value);
+            formData.append('state', document.getElementById('state').value);
+            formData.append('city', document.getElementById('city').value);
+            formData.append('category', document.getElementById('category').value);
+            formData.append('complaint_text', document.getElementById('complaint_text').value);
+            formData.append('latitude', document.getElementById('latitude').value);
+            formData.append('longitude', document.getElementById('longitude').value);
+            
+            const fileInput = document.getElementById('attachment');
+            if (fileInput.files[0]) formData.append('attachment', fileInput.files[0]);
+
+            const res = await fetch('/api/submit_complaint', { method: 'POST', body: formData });
+            const data = await res.json();
+
+            if (data.success) {
+                document.getElementById('receipt-box').classList.remove('hidden');
+                document.getElementById('receipt-id').innerText = data.complaint_id;
+                document.getElementById('receipt-score').innerText = `${data.priority_score}/100 [${data.urgency_label}]`;
+                document.getElementById('complaint-form').reset();
+            } else {
+                alert(data.message);
+            }
+        }
+
+        function switchView(view) {
+            if (view === 'new') {
+                document.getElementById('view-new').classList.remove('hidden');
+                document.getElementById('view-history').classList.add('hidden');
+                document.getElementById('btn-tab-new').classList.add('active');
+                document.getElementById('btn-tab-history').classList.remove('active');
+            } else {
+                document.getElementById('view-history').classList.remove('hidden');
+                document.getElementById('view-new').classList.add('hidden');
+                document.getElementById('btn-tab-history').classList.add('active');
+                document.getElementById('btn-tab-new').classList.remove('active');
+                loadHistory();
+            }
+        }
+
+        async function loadHistory() {
+            const res = await fetch('/api/user/complaints');
+            const data = await res.json();
+            const list = document.getElementById('history-list');
+
+            if (!data.complaints || data.complaints.length === 0) {
+                list.innerHTML = '<p style="color: var(--text-muted);">No complaints filed yet.</p>';
+                return;
+            }
+
+            list.innerHTML = '';
+            data.complaints.forEach(item => {
+                const card = document.createElement('div');
+                const statusClass = `status-${item.status.replace(" ", "-")}`;
+                card.style.cssText = 'background: var(--bg-main); padding: 1.2rem; border-radius: 6px; margin-bottom: 1rem; border: 1px solid var(--border-color);';
+                
+                let coordsText = item.latitude && item.longitude ? ` | GPS Pin: <code>${item.latitude}, ${item.longitude}</code>` : '';
+
+                card.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong style="font-family: monospace; font-size: 1.05rem; color: var(--primary);">ID: ${item.complaint_id_str}</strong>
+                        <span class="status-badge ${statusClass}">Status: ${item.status}</span>
+                    </div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 8px;">
+                        ${item.category} — ${item.city}, ${item.state}, ${item.country}${coordsText}
+                    </div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 4px;">
+                        Severity Score: <strong>${item.priority_score}/100</strong> (${item.urgency_label}) | Filed On: ${item.created_at}
+                    </div>
+                `;
+                list.appendChild(card);
+            });
+        }
+
+        async function logout() {
+            await fetch('/api/logout', {method: 'POST'});
+            window.location.href = '/';
+        }
+    </script>
+</body>
+</html>

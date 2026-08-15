@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CivicPulse — Governance Portal</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 1rem;
+            background: rgba(255, 255, 255, 0.02);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1.5rem;
+            border: 1px solid var(--border-color);
+        }
+        .status-btn {
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            border: 1px solid var(--border-color);
+            background: transparent;
+            color: var(--text-main);
+            margin-right: 5px;
+        }
+        .status-btn:hover { background: var(--primary); color: #000; }
+    </style>
+</head>
+<body>
+    <div id="admin-login-view" style="display: flex; align-items: center; justify-content: center; min-height: 100vh;">
+        <div class="card" style="width: 100%; max-width: 400px;">
+            <h2 style="text-align: center;">🏛️ Government Admin Access</h2>
+            <p style="text-align: center; color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.5rem;">
+                Enter ISO Country Code (e.g., US, IN, GB, CA, AU, DE, FR)
+            </p>
+
+            <form onsubmit="adminLogin(event)">
+                <div class="form-group">
+                    <label>Country Code (Username)</label>
+                    <input type="text" id="admin-user" placeholder="IN" required style="text-transform: uppercase;">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" id="admin-pass" placeholder="Default: abcgov" required>
+                </div>
+                <button type="submit" class="btn-primary" style="width: 100%;">Authenticate</button>
+            </form>
+            <div id="admin-login-error" style="color: var(--danger); font-size: 0.85rem; margin-top: 1rem; text-align: center;"></div>
+        </div>
+    </div>
+
+    <div id="pwd-modal" class="hidden" style="position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 999;">
+        <div class="card" style="width: 100%; max-width: 380px;">
+            <h3>⚠️ First Login: Update Password</h3>
+            <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+                For security reasons, you must change your default password before accessing the terminal.
+            </p>
+            <form onsubmit="changeAdminPassword(event)">
+                <div class="form-group">
+                    <label>New Password</label>
+                    <input type="password" id="new-password" required minlength="6">
+                </div>
+                <button type="submit" class="btn-primary" style="width: 100%;">Set New Password & Continue</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="admin-dashboard-view" class="hidden">
+        <header class="pulse-nav">
+            <div class="brand-title">🏛️ CivicPulse Governance Console (<span id="header-country-code"></span>)</div>
+            <button onclick="adminLogout()" class="btn-secondary">Logout</button>
+        </header>
+
+        <div class="container">
+            <div class="card">
+                <h2>Advanced Grievance Command Center</h2>
+                
+                <!-- Dynamic Controls for Sorting & Filtering -->
+                <div class="filter-grid">
+                    <div>
+                        <label style="font-size: 0.8rem; color: var(--text-muted);">Sort By</label>
+                        <select id="filter-sort" onchange="renderAdminView()">
+                            <option value="score-desc">Importance (Highest First)</option>
+                            <option value="score-asc">Importance (Lowest First)</option>
+                            <option value="date-desc">Newest First</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8rem; color: var(--text-muted);">Filter Category</label>
+                        <select id="filter-category" onchange="renderAdminView()">
+                            <option value="ALL">All Categories</option>
+                            <option value="Public Sanitation">Public Sanitation</option>
+                            <option value="Water Infrastructure">Water Infrastructure</option>
+                            <option value="Electrical Power Grid">Electrical Power Grid</option>
+                            <option value="Roads & Highways">Roads & Highways</option>
+                            <option value="Public Health Danger">Public Health Danger</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8rem; color: var(--text-muted);">Filter Status</label>
+                        <select id="filter-status" onchange="renderAdminView()">
+                            <option value="ALL">All Statuses</option>
+                            <option value="Pending">Pending</option>
+                            <option value="Resolved">Resolved</option>
+                            <option value="Not Important">Not Important</option>
+                            <option value="Rejected">Rejected</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.8rem; color: var(--text-muted);">Search Location/ID</label>
+                        <input type="text" id="filter-search" placeholder="City, State, or ID..." oninput="renderAdminView()" style="font-size: 0.85rem;">
+                    </div>
+                </div>
+
+                <div id="admin-complaints-list" style="margin-top: 1rem;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let rawComplaints = [];
+
+        async function adminLogin(e) {
+            e.preventDefault();
+            const username = document.getElementById('admin-user').value.trim();
+            const password = document.getElementById('admin-pass').value;
+            const errDiv = document.getElementById('admin-login-error');
+            errDiv.innerText = '';
+
+            try {
+                const res = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    document.getElementById('admin-login-view').classList.add('hidden');
+                    if (data.must_change_password) {
+                        document.getElementById('pwd-modal').classList.remove('hidden');
+                    } else {
+                        showAdminConsole(data.country_code);
+                    }
+                } else {
+                    errDiv.innerText = data.message || 'Login failed.';
+                }
+            } catch (err) {
+                errDiv.innerText = 'Server error. Try again.';
+            }
+        }
+
+        async function changeAdminPassword(e) {
+            e.preventDefault();
+            const newPassword = document.getElementById('new-password').value;
+
+            const res = await fetch('/api/admin/change_password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ new_password: newPassword })
+            });
+            const data = await res.json();
+
+            if (data.success) {
+                document.getElementById('pwd-modal').classList.add('hidden');
+                showAdminConsole();
+            } else {
+                alert(data.message);
+            }
+        }
+
+        async function showAdminConsole(code) {
+            document.getElementById('admin-dashboard-view').classList.remove('hidden');
+            if (code) document.getElementById('header-country-code').innerText = code;
+            await loadAdminComplaints();
+        }
+
+        async function loadAdminComplaints() {
+            const res = await fetch('/api/admin/complaints');
+            const data = await res.json();
+
+            if (!data.success) {
+                window.location.reload();
+                return;
+            }
+
+            document.getElementById('header-country-code').innerText = data.country_code;
+            rawComplaints = data.complaints || [];
+            renderAdminView();
+        }
+
+        function renderAdminView() {
+            const container = document.getElementById('admin-complaints-list');
+            const sortMode = document.getElementById('filter-sort').value;
+            const catFilter = document.getElementById('filter-category').value;
+            const statusFilter = document.getElementById('filter-status').value;
+            const search = document.getElementById('filter-search').value.toLowerCase().trim();
+
+            let list = [...rawComplaints];
+
+            if (catFilter !== 'ALL') list = list.filter(item => item.category === catFilter);
+            if (statusFilter !== 'ALL') list = list.filter(item => item.status === statusFilter);
+            if (search) {
+                list = list.filter(item => 
+                    item.complaint_id_str.toLowerCase().includes(search) ||
+                    item.city.toLowerCase().includes(search) ||
+                    item.state.toLowerCase().includes(search)
+                );
+            }
+
+            if (sortMode === 'score-desc') list.sort((a, b) => b.priority_score - a.priority_score);
+            else if (sortMode === 'score-asc') list.sort((a, b) => a.priority_score - b.priority_score);
+
+            if (list.length === 0) {
+                container.innerHTML = '<p style="color: var(--text-muted); padding: 1rem;">No complaints match the specified filters.</p>';
+                return;
+            }
+
+            container.innerHTML = '';
+            list.forEach(item => {
+                const card = document.createElement('div');
+                let badgeColor = '#6b7280';
+                if (item.urgency_label === 'CRITICAL') badgeColor = '#ef4444';
+                else if (item.urgency_label === 'HIGH') badgeColor = '#f97316';
+                else if (item.urgency_label === 'MEDIUM') badgeColor = '#eab308';
+
+                let coordsText = item.latitude && item.longitude ? ` | GPS: <a href="https://www.openstreetmap.org/?mlat=${item.latitude}&mlon=${item.longitude}#map=15/${item.latitude}/${item.longitude}" target="_blank" style="color: var(--primary);">[${item.latitude}, ${item.longitude}]</a>` : '';
+
+                card.style.cssText = 'background: var(--bg-main); padding: 1.2rem; border-radius: 8px; margin-bottom: 1rem; border: 1px solid var(--border-color);';
+                card.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong style="font-family: monospace; font-size: 1.1rem; color: var(--primary);">ID: ${item.complaint_id_str}</strong>
+                        <div>
+                            <span style="background: ${badgeColor}; color: #fff; padding: 3px 10px; border-radius: 12px; font-weight: bold; font-size: 0.8rem;">
+                                Score: ${item.priority_score}/100 (${item.urgency_label})
+                            </span>
+                            <span style="background: rgba(255,255,255,0.1); padding: 3px 10px; border-radius: 12px; font-size: 0.8rem; margin-left: 5px;">
+                                Current Status: <strong>${item.status}</strong>
+                            </span>
+                        </div>
+                    </div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted); margin: 8px 0;">
+                        Category: <strong>${item.category}</strong> | Location: <strong>${item.city}, ${item.state}, ${item.country}</strong>${coordsText} | Date: ${item.created_at}
+                    </div>
+                    <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 8px;">
+                        Reported By: ${item.user_email} | Matched Keywords: <span style="color: var(--primary);">${item.matched_keywords}</span>
+                    </div>
+                    <p style="background: rgba(255,255,255,0.03); padding: 10px; border-radius: 4px; border-left: 3px solid var(--primary); font-size: 0.95rem; white-space: pre-wrap;">${item.complaint_text}</p>
+                    ${item.attachment_filename ? `<div style="margin-top: 10px; font-size: 0.85rem;">📎 Attachment: <code>${item.attachment_filename}</code></div>` : ''}
+                    
+                    <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border-color); display: flex; align-items: center; justify-content: space-between;">
+                        <span style="font-size: 0.85rem; color: var(--text-muted);">Set Official Status:</span>
+                        <div>
+                            <button onclick="updateStatus('${item.complaint_id_str}', 'Resolved')" class="status-btn" style="border-color: #22c55e;">Resolved</button>
+                            <button onclick="updateStatus('${item.complaint_id_str}', 'Not Important')" class="status-btn" style="border-color: #6b7280;">Not Important</button>
+                            <button onclick="updateStatus('${item.complaint_id_str}', 'Rejected')" class="status-btn" style="border-color: #ef4444;">Rejected</button>
+                            <button onclick="updateStatus('${item.complaint_id_str}', 'Pending')" class="status-btn">Reset to Pending</button>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        async function updateStatus(complaintId, status) {
+            const res = await fetch('/api/admin/update_status', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ complaint_id: complaintId, status: status })
+            });
+            const data = await res.json();
+            if (data.success) {
+                await loadAdminComplaints();
+            } else {
+                alert(data.message);
+            }
+        }
+
+        async function adminLogout() {
+            await fetch('/api/admin/logout', { method: 'POST' });
+            window.location.href = '/admin';
+        }
+    </script>
+</body>
+</html>
